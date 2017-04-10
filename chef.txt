@@ -1,0 +1,354 @@
+#Configure the Chef Server
+We will begin by setting up the Chef server. Remember, Chef recommends at least 4 cores and 4 GB of RAM for this server, so plan accordingly.
+#My aim is for you to easily convert this to a bash script so your life can become easy and within 10 mins your chef workstation, chef sever and a couple of nodes will be up and running so lets get into it!!!
+
+
+Ensure that the Server is Accessible by Hostname
+
+hostname -f
+
+sudo nano /etc/hosts
+
+###########
+Congiure your Host file to look like this!
+
+127.0.1.1 fqdn_or_IP_address host_alias
+127.0.0.1 localhost
+IP_address fqdn_or_IP_address host_alias
+So, if I do not have a domain name, my public IP address is 123.123.123.123, and if I also want my host reachable by the hostname "chef", I could have a file that looks like this:
+
+127.0.1.1 123.123.123.123 chef
+127.0.0.1 localhost
+123.123.123.123 123.123.123.123 chef
+If, on the other hand, this server has the fully qualified domain name of chef.example.com and an IP address of 234.234.234.234, my file might look something like this instead:
+
+127.0.1.1 chef.example.com chef
+127.0.0.1 localhost
+234.234.234.234 chef.example.com chef
+
+Save and close the file when you are finished. You can check that the value was set correctly by typing:
+
+
+
+#then Type
+
+hostname -f
+
+
+Download and Install the Chef 12 Server software
+
+Next, we can go ahead and download the Chef 12 server software. You can find the package that must be installed by visiting the Chef site. Specifically, for an Ubuntu installation, you can follow this link.
+
+Under the "Ubuntu Linux 14.04" header, right-click on the download link and copy the link location:
+
+
+# download the various components using wget
+
+
+cd ~
+wget https://web-dl.packagecloud.io/chef/stable/packages/ubuntu/trusty/chef-server-core_12.0.5-1_amd64.deb
+
+# Once the download is complete, install the package by typing:
+
+sudo dpkg -i chef-server-core_*.deb
+
+###############
+
+# create user accounts to manage changes on the infrastructure
+
+Create an Admin User and Organization
+
+Next, we need to create an admin user. This will be the username that will have access to make changes to the infrastructure components in the organization we will be creating.
+
+We can do this using the user-create subcommand of the chef-server-ctl command. The command requires a number of fields to be passed in during the creation process. The general syntax is:
+
+chef-server-ctl user-create USERNAME FIRST_NAME LAST_NAME EMAIL PASSWORD
+We will include this information, and will also add -f, an additional flag, onto the end in order to specify a filename in which to output our new user's private RSA key. We will need this in order to authenticate using the knife management command later.
+
+For our example, we will create a user with the following information:
+
+Username: admin
+First Name: admin
+Last Name: admin
+Email: admin@example.com
+Password: examplepass
+Filename: admin.pem
+The command needed to create a user with this information is (you should change this to reflect your information, especially the password):
+
+
+
+sudo chef-server-ctl user-create admin admin admin admin@example.com examplepass -f admin.pem
+
+
+You should now have a private key called admin.pem in your current directory.
+
+Now that you have a user, you can create an organization with the org-create subcommand. An organization is simply a grouping of infrastructure and configuration within Chef. The command has the following general syntax:
+
+
+chef-server-ctl org-create SHORTNAME LONGNAME --association_user USERNAME
+
+
+The short name is the name that you will use to refer to the organization from within Chef. The long name is the actual name of the organization. The --association_user specifies the username that has access to administer the organization. Again, we will add the -f flag so that we can specify the name of the file to place the private key. The key that will be created is used to validate new clients as part of the organization until they can get their own unique client key.
+
+We will create an organization with the following qualities:
+
+Short Name: testorg
+Long Name: longtestorg
+Association User: admin
+Filename: testorgvalidator.pem
+To create an organization with the above qualities, we will use the following command
+
+sudo chef-server-ctl org-create testorg "longtestorg, Inc." --association_user admin -f testorgvalidator.pem
+
+
+
+
+
+Following this, you should have two .pem key files in your home directory. In our case, they will be called admin.pem and digitalocean-validator.pem. We will need to connect to this server and download these keys to our workstation momentarily. For now though, our Chef server installation is complete.
+
+######
+Configure a Chef Workstation
+Now that our Chef server is up and running, our next course of action is to configure a workstation. The actual infrastructure coordination and configuration does not take place on the Chef server. This work is done on a workstation which then uploads the data to the server to influence the Chef environment.
+
+Clone the Chef Repo
+
+The Chef configuration for your infrastructure is maintained in a hierarchical file structure known collectively as a Chef repo. The general structure of this can be found in a GitHub repository provided by the Chef team. We will use git to clone this repo onto our workstation to work as a basis for our infrastructure's Chef repository.
+
+First, we need to install git through the apt packaging tools. Update your packaging index and install the tool by typing:
+
+sudo apt-get update
+sudo apt-get install git
+Once you have git installed, you can clone the Chef repository onto your machine. For this guide, we will simply clone it to our home directory:
+
+cd ~
+git clone https://github.com/chef/chef-repo.git
+This will pull down the basic Chef repo structure into a directory called chef-repo in your home directory.
+
+Putting your Chef Repo Under Version Control
+
+The configurations authored within the Chef repo itself are best managed within a version control system in the same way that you would manage code. Since we cloned the repo above, a git repo has already been initialized.
+
+To set your workstation up for new commits, you should do a few things.
+
+First, set the name and email that git will use to tag any commits you make. This is a requirement for git to accept commits. We set this globally so that any git repo we create will use these values:
+
+git config --global user.name "Your Name"
+git config --global user.email "username@domain.com"
+Next, we will tell git to ignore any information contained within the ~/chef-repo/.chef directory. We will create this directory in a few minutes to store some sensitive information. For now, we can add this location to our .gitignore file so that git does not store data that should not be exposed to other people:
+
+echo ".chef" >> ~/chef-repo/.gitignore
+Since we have made a change to the .gitignore file, we can go ahead and make our first new commit to the version control system. First, add all of the modified files to the current staging area:
+
+cd ~/chef-repo
+git add .
+Now, commit the changes. We will use the -m flag to specify an in-line commit message describing the changes we are making:
+
+git commit -m "Excluding the ./.chef directory from version control"
+Our Chef repo is now under version control. As we author configurations for our infrastructure, we can use the above two commands to keep our git repo up-to-date.
+
+Download and Install the Chef Development Kit
+
+Next, we need to install the Chef Development Kit, a suite of software designed for Chef workstations. This includes many utilities that will be useful when designing configurations for your infrastructure. The tool we are interested in at this point is the bundled knife command, which can communicate with and control both the Chef server and any Chef clients.
+
+We can find the Chef 12 Development Kit on the Chef website. Since we are using Ubuntu 14.04 as our workstation, the page here will contain the latest download link. Note that at the time of this writing, the download link only references Ubuntu 12.04 and Ubuntu 13.10, but it should still install without issue on Ubuntu 14.04.
+
+
+
+####################
+
+Back on your workstation, change to your home directory. Paste the link you copied and use the wget command to download the package. The link you copied may be different from the one below if a newer development kit version has been released:
+
+cd ~
+wget https://opscode-omnibus-packages.s3.amazonaws.com/ubuntu/12.04/x86_64/chefdk_0.4.0-1_amd64.deb
+Once the .deb package has been downloaded, you can install it by typing:
+
+sudo dpkg -i chefdk_*.deb
+After the installation, you can verify that all of the components are available in their expected location through the new chef command:
+
+chef verify
+If your workstation will primarily be used to manage Chef for your infrastructure, you will likely want to default to the version of Ruby installed with Chef. You can do this by modifying your .bash_profile so that Chef's Ruby takes precedence:
+
+echo 'eval "$(chef shell-init bash)"' >> ~/.bash_profile
+Afterwards, you can source your .bash_profile file to set the correct environmental variables for the current session:
+
+source ~/.bash_profile
+If you wish to manage your Ruby versions independently, you can skip the above steps.
+
+Download the Authentication Keys to the Workstation
+
+At this point, your workstation has all of the software needed to interact with a Chef server and compose infrastructure configurations. However, it is not yet configured to interact with your Chef server and your environment. In this section, we'll download the credentials we created on the Chef server.
+
+We will use the scp utility to download the user key and the organization validator key that we created on the Chef server. Before doing so, we will create the hidden directory where we will store these files:
+
+mkdir ~/chef-repo/.chef
+The method that you use to connect to the Chef server will determine how exactly we go about downloading the keys. Follow the method below that matches your setup:
+
+How To Download Keys when Connecting to a Chef Server with Passwords
+If you connect to your Chef server through SSH using password-based authentication, the scp command will work without significant modification.
+
+On your workstation, specify the username and domain name or IP address used to connect to the Chef server. Follow this immediately with a colon (:) and the path to the file you wish to download. After adding a space, indicate the directory on the local computer where you wish the download the files to be placed (~/chef-repo/.chef in our case).
+
+If you log into the Chef server using the root user account, your commands will look something like this. Remember to change both the domain name or IP address and the name of the key files you are trying to download to match your environment:
+
+scp root@server_domain_or_IP:/root/admin.pem ~/chef-repo/.chef
+scp root@server_domain_or_IP:/root/digitalocean-validator.pem ~/chef-repo/.chef
+If you connect to your Chef server using a non-root user, the commands will look more like this:
+
+scp username@server_domain_or_IP:/home/username/admin.pem ~/chef-repo/.chef
+scp username@server_domain_or_IP:/home/username/digitalocean-validator.pem ~/chef-repo/.chef
+How To Download Keys when Connecting to a Chef Server Using SSH Keys
+If, instead, you connect to your Chef server using SSH keys (recommended), you will need to perform some additional steps.
+
+First, leave your SSH session with the workstation. We will need to reconnect momentarily with a new parameter:
+
+exit
+Once you are back on your local computer, you will need to add the SSH keys you use to connect to the Chef server to an SSH agent. OpenSSH, the standard SSH suite, includes an SSH agent that can be started by typing:
+
+eval $(ssh-agent)
+You should see output that looks like this (the number will likely be different):
+
+Agent pid 13881
+Once the agent is started, you can add your SSH key to it:
+
+ssh-add
+Identity added: /home/demo/.ssh/id_rsa (rsa w/o comment)
+This will keep your SSH key stored in memory. Now, you can forward the stored key to your workstation as you connect by using the -A option with ssh. This will allow you to connect to any computer from your workstation as if you were connecting from your local computer:
+
+ssh -A username@workstation_domain_or_IP
+Now, you can connect to your Chef server without needing a password using the forwarded SSH credentials. If the keys on your Chef server were available through the root user, the commands you will need will look similar to this. Remember to change the Chef server domain name or IP address and the key names as needed:
+
+scp root@server_domain_or_IP:/root/admin.pem ~/chef-repo/.chef
+scp root@server_domain_or_IP:/root/digitalocean-validator.pem ~/chef-repo/.chef
+If the SSH key configured for the Chef server instead is used to authenticate you to a regular user account, your commands will look like this instead:
+
+scp username@server_domain_or_IP:/home/username/admin.pem ~/chef-repo/.chef
+scp username@server_domain_or_IP:/home/username/digitalocean-validator.pem ~/chef-repo/.chef
+Configuring Knife to Manage your Chef Environment
+
+Now that you have your Chef credentials available on your workstation, we can configure the knife command with the information it needs to connect to and control your Chef infrastructure. This is done through a knife.rb file that we will place in the ~/chef-repo/.chef directory along with our keys.
+
+Open up a file called knife.rb in that directory in your text editor:
+
+nano ~/chef-repo/.chef/knife.rb
+In this file, paste the following information:
+
+current_dir = File.dirname(__FILE__)
+log_level                :info
+log_location             STDOUT
+node_name                "name_for_workstation"
+client_key               "#{current_dir}/name_of_user_key"
+validation_client_name   "organization_validator_name"
+validation_key           "#{current_dir}/organization_validator_key"
+chef_server_url          "https://server_domain_or_IP/organizations/organization_name"
+syntax_check_cache_path  "#{ENV['HOME']}/.chef/syntaxcache"
+cookbook_path            ["#{current_dir}/../cookbooks"]
+The following items should be adjusted to suit your infrastructure:
+
+node_name: This specifies the name that knife will use to connect to your Chef server. This should match your user name.
+client_key: This should be the name and path to the user key that you copied over from the Chef server. We can use the #{current_dir} snippet to fill in the path if the key is in the same directory as the knife.rb file.
+validation_client_name: This is the name of the validation client that knife will use to bootstrap new nodes. This will take the form of your organization short name, followed by -validator.
+validation_key: Like the client_key, this includes the name and path to the validation key you copied from the Chef server. Again, you can use the #{current_dir} Ruby snippet to specify the current directory if the validation key is in the same directory as the knife.rb file.
+chef_server_url: This is the URL where the Chef server can be reached. It should begin with https://, followed by your Chef server's domain name or IP address. Afterwards, the path to your organization should be specified by appending /organizations/your_organization_name.
+For our guide, the knife.rb file will look similar to this. You still need to adjust the server's domain name or IP address if you are following along:
+
+current_dir = File.dirname(__FILE__)
+log_level                :info
+log_location             STDOUT
+node_name                "admin"
+client_key               "#{current_dir}/admin.pem"
+validation_client_name   "digitalocean-validator"
+validation_key           "#{current_dir}/digitalocean-validator.pem"
+chef_server_url          "https://server_domain_or_IP/organizations/digitalocean"
+syntax_check_cache_path  "#{ENV['HOME']}/.chef/syntaxcache"
+cookbook_path            ["#{current_dir}/../cookbooks"]
+When you are finished, save and close the knife.rb file.
+
+Now, we will test the configuration file by trying out a simple knife command. We need to be in our ~/chef-repo directory for our configuration file to be read correctly:
+
+cd ~/chef-repo
+knife client list
+This first attempt should fail with an error that looks like this:
+
+ERROR: SSL Validation failure connecting to host: server_domain_or_IP - SSL_connect returned=1 errno=0 state=SSLv3 read server certificate B: certificate verify failed
+ERROR: Could not establish a secure connection to the server.
+Use `knife ssl check` to troubleshoot your SSL configuration.
+If your Chef Server uses a self-signed certificate, you can use
+`knife ssl fetch` to make knife trust the server's certificates.
+
+Original Exception: OpenSSL::SSL::SSLError: SSL_connect returned=1 errno=0 state=SSLv3 read server certificate B: certificate verify failed
+This occurs because we do not have our Chef server's SSL certificate on our workstation. We can acquire this by typing:
+
+knife ssl fetch
+This should add the Chef server's certificate file to a list in our ~/chef-repo/.chef directory:
+
+WARNING: Certificates from server_domain_or_IP will be fetched and placed in your trusted_cert
+directory (/home/demo/chef-repo/.chef/trusted_certs).
+
+Knife has no means to verify these are the correct certificates. You should
+verify the authenticity of these certificates after downloading.
+
+Adding certificate for server_domain_or_IP in /home/demo/chef-repo/.chef/trusted_certs/server_domain_or_IP.crt
+After the SSL certificate has been fetched, the previous command should now work:
+
+knife client list
+digitalocean-validator
+If the above command correctly returns, your workstation is now set up to control your Chef environment.
+
+Bootstrapping a New Node with Knife
+With our Chef server and workstation configured, we can begin using Chef to configure new servers within our infrastructure.
+
+This happens through a process called "bootstrapping" in which the Chef client executable is installed on the new computer and the organizational validator key is passed along as well. The new node then contacts the Chef server with the validator key and, in return, receives its own unique client key and any configuration that has been assigned to it. This process gets the new server into its initial state and sets it up for any future management.
+
+To connect to the new server, we will need a few pieces of information about the new node:
+
+The domain name or IP address where it can be reached
+The username used to complete administrative actions. This can be either root, or a user configured with sudo privileges.
+A method of logging in as the above user. This can be either the password, or the ability to use an SSH key.
+A method of performing administrative tasks. For root users, this is unnecessary. For users relying on sudo privileges, a password is generally necessary.
+The general syntax of the command will be:
+
+knife bootstrap node_domain_or_IP [options]
+Some common options you may end up using are:
+
+-x: Used to specify the username to authenticate with through SSH. This is usually required.
+-N: The new name for the node, as displayed within Chef. Leaving this out will usually result in the hostname being used for the Chef node name.
+-P: Used to specify the password for the username on the remote server. This is necessary if either the SSH session requires password authentication or if the username requires a password for sudo commands.
+--sudo: If the username on the remote server will need to use sudo to perform administrative actions, this flag is needed. By default, it will prompt for the sudo password.
+--use-sudo-password: If you are already providing the password for the user with the -P flag, using this flag in addition to the --sudo flag will use the -P password without prompting.
+-A: This option forwards SSH keys to the remote host to login rather than using password authentication.
+When using the -A option, you must start an SSH agent on your local computer, add the SSH key that can be used to connect to the new node, and forward that information to your workstation by connecting with the -A flag initially. More information about how to do this can be found in the workstation configuration section regarding downloading the keys from the Chef server.
+
+Using the above information, it is possible to construct the correct bootstrapping commands for a variety of situations.
+
+For example, to bootstrap a node with the name "testing", using the username demo, which is configured with sudo privileges, and which needs a password for SSH and the sudo validation, we can type:
+
+knife bootstrap node_domain_or_IP -N testing -x demo -P password --sudo --use-sudo-password
+If we want to bootstrap using the root user, with SSH key authentication using keys available on the workstation, and wish to keep use the node's hostname as the Chef node name, we can type:
+
+knife bootstrap node_domain_or_IP -x root -A
+If we want to use SSH keys to authenticate to a sudo user, we will still need to provide a password using the -P flag, the --sudo flag, and the --use-sudo-password flag to avoid prompts:
+
+knife bootstrap node_domain_or_IP -x demo -A -P password --sudo --use-sudo-password -N name
+If you are in the above scenario, but do not mind being promted for the sudo password, you can instead just type this:
+
+knife bootstrap node_domain_or_IP -x demo -A --sudo -N name
+Once your new node is bootstrapped, you should have a new client:
+
+knife client list
+digitalocean-validator
+name
+You should also have a new node of the same name:
+
+knife node list
+name
+You can use the above procedure to easily set up new Chef clients on any number of new servers.
+
+If you want to learn about how to automatically add your new D Droplets to your existing Chef infrastructure without having to bootstrap each one, check out this tutorial.
+
+
+
+#############
+Conclusion
+After following this guide, you should have a fully functional Chef server configured for your infrastructure. We have also set up a workstation that can be used to manage and maintain the configurations that Chef will apply to your infrastructure. We have demonstrated how to use the knife command to bootstrap the servers that will be configured by Chef.
+
+In the next guide, we will demonstrate how to design configurations for your nodes using some Chef constructs. We will go over the fundamentals of Chef recipes and cookbooks as ways to control your infrastructure with declarative configs.
